@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Veiculo;
 
 use App\Http\Controllers\Controller;
+use App\Models\Gestor;
+use App\Models\Motorista;
+use App\Models\MotoristaVeiculo;
 use App\Models\Veiculo;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
@@ -17,9 +20,24 @@ class VeiculosController extends Controller
      *
      * @return LengthAwarePaginator<int, Veiculo>
      */
-    public function index(): LengthAwarePaginator
+    public function index(Request $request): LengthAwarePaginator
     {
-        return Veiculo::orderBy('id', 'desc')->paginate();
+        $dados = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'rowsPerPage' => 'sometimes|integer|between:1,100',
+            'page' => 'sometimes|integer|min:1',
+        ]);
+        $query = $request->user() instanceof Gestor ? Veiculo::query() : Veiculo::visiveis();
+        $busca = trim($dados['search'] ?? '');
+        if ($busca !== '') {
+            $query->where(function ($consulta) use ($busca): void {
+                foreach (['marca', 'modelo', 'placa', 'renavam', 'cor'] as $campo) {
+                    $consulta->orWhere($campo, 'like', '%'.$busca.'%');
+                }
+            });
+        }
+
+        return $query->orderBy('id', 'desc')->paginate($dados['rowsPerPage'] ?? 15);
     }
 
     /**
@@ -27,6 +45,7 @@ class VeiculosController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $request->merge(['cpf_cnpj_proprietario' => preg_replace('/\D/', '', (string) $request->input('cpf_cnpj_proprietario'))]);
         $dados = $request->validate([
             'marca' => 'required|string',
             'modelo' => 'required|string',
@@ -39,7 +58,12 @@ class VeiculosController extends Controller
                 Rule::unique('veiculos')->where('renavam', $request->input('renavam')),
             ],
             'renavam' => 'required|string|max:11',
-            'categoria' => 'required|string',
+            'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
+            'cpf_cnpj_proprietario' => ['required', 'string', 'regex:/^(?:[0-9]{11}|[0-9]{14})$/'],
+            'nome_proprietario' => 'nullable|string|max:255',
+            'categoria' => 'required|string|in:carro,moto',
+            'eletrico' => 'sometimes|boolean|declined_if:categoria,moto',
+            'taxi' => 'sometimes|boolean',
             'status' => 'required|string',
             'uf' => 'required|string|size:2',
         ]);
@@ -83,12 +107,40 @@ class VeiculosController extends Controller
                     ->ignore($veiculo->id),
             ],
             'renavam' => 'sometimes|required|string|max:11',
-            'categoria' => 'sometimes|required|string',
+            'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
+            'categoria' => 'sometimes|required|string|in:carro,moto',
+            'eletrico' => 'sometimes|boolean',
+            'taxi' => 'sometimes|boolean',
             'status' => 'sometimes|required|string',
             'uf' => 'sometimes|required|string|size:2',
         ]);
 
-        $veiculo->update($dados);
+        // ninguém aprova elétrico ou táxi no próprio veículo
+        $decideCategoria = array_key_exists('eletrico', $dados) || array_key_exists('taxi', $dados);
+        $motoristaDoUsuario = Motorista::where('user_id', $request->user()->id)->value('id');
+
+        if ($decideCategoria && $motoristaDoUsuario !== null && MotoristaVeiculo::where('motorista_id', $motoristaDoUsuario)
+            ->where('veiculo_id', $veiculo->id)
+            ->exists()) {
+            return response()->json([
+                'message' => 'Você não pode aprovar elétrico ou táxi no seu próprio veículo.',
+            ], 403);
+        }
+
+        $veiculo->fill($dados);
+        // a gestão decidindo elétrico ou táxi encerra o pedido do motorista
+        if (array_key_exists('eletrico', $dados)) {
+            $veiculo->eletrico_solicitado = false;
+        }
+        if (array_key_exists('taxi', $dados)) {
+            $veiculo->taxi_solicitado = false;
+        }
+        // não existe moto elétrica: trocar para moto tira a marcação
+        if ($veiculo->categoria === 'moto') {
+            $veiculo->eletrico = false;
+            $veiculo->eletrico_solicitado = false;
+        }
+        $veiculo->save();
 
         return response()->json([
             'success' => true,
@@ -110,6 +162,6 @@ class VeiculosController extends Controller
      */
     public function veiculoPorPlaca(string $placa): Collection
     {
-        return Veiculo::where('placa', 'like', "%{$placa}%")->get();
+        return Veiculo::liberados()->where('placa', 'like', "%{$placa}%")->get();
     }
 }

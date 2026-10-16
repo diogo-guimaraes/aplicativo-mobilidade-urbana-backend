@@ -149,6 +149,17 @@ class PagamentoCorridaService
                 return null;
             }
 
+            if ($corrida->status_corrida === 'aguardando_pagamento' && $corrida->motorista_id !== null) {
+                // Negocia: a proposta já foi escolhida e o motorista estava esperando
+                $corrida->update([
+                    'status_corrida' => 'aceita',
+                    'status_pagamento' => 'pago',
+                    'tempo_aceite' => now(),
+                ]);
+
+                return $corrida;
+            }
+
             if ($corrida->status_corrida === 'aguardando_pagamento') {
                 // o raio de busca cresce a partir de tempo_solicitacao: conta do pagamento
                 $corrida->update([
@@ -170,7 +181,7 @@ class PagamentoCorridaService
 
         if ($liberada !== null) {
             Avisar::semQuebrar(new CorridasDisponiveisAlteradas);
-            Avisar::semQuebrar(new CorridaAtualizada($liberada->id, 'solicitada'));
+            Avisar::semQuebrar(new CorridaAtualizada($liberada->id, $liberada->status_corrida));
 
             return;
         }
@@ -263,8 +274,14 @@ class PagamentoCorridaService
     public function expirarPagamentosVencidos(): int
     {
         $limite = now()->subSeconds((int) config('abacatepay.validade_segundos', 900) + 60);
+        // no Negocia o motorista escolhido fica parado esperando: prazo menor
+        $limiteNegocia = now()->subSeconds((int) config('precificacao.negocia_pagamento_limite_segundos', 300));
         $ids = Corrida::where('status_corrida', 'aguardando_pagamento')
-            ->where('tempo_solicitacao', '<=', $limite)
+            ->where(fn ($vencida) => $vencida
+                ->where('tempo_solicitacao', '<=', $limite)
+                ->orWhere(fn ($reservada) => $reservada
+                    ->whereNotNull('motorista_id')
+                    ->where('tempo_aceite', '<=', $limiteNegocia)))
             ->pluck('id');
         $canceladas = 0;
 
@@ -290,6 +307,10 @@ class PagamentoCorridaService
                     'cancelado_por' => 'sistema',
                     'motivo_cancelamento' => 'Pagamento não confirmado a tempo.',
                 ]);
+
+                if ($corrida->motorista_id !== null) {
+                    app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $corrida->motorista_id);
+                }
 
                 return $corrida;
             });
@@ -484,6 +505,7 @@ class PagamentoCorridaService
             $texto = number_format($valor, 2, ',', '.');
             $this->notificarUsuario->executar(
                 (int) $userId,
+                'passageiro',
                 'Pagamento pendente',
                 "Falta pagar R$ {$texto} da corrida {$corrida->codigo_corrida}. Pague para pedir uma nova corrida."
             );
@@ -497,6 +519,7 @@ class PagamentoCorridaService
         if ($userId !== null) {
             $this->notificarUsuario->executar(
                 (int) $userId,
+                'motorista',
                 'Pagamento recebido',
                 "O passageiro quitou o valor pendente da corrida {$corrida->codigo_corrida}."
             );

@@ -10,10 +10,12 @@ use App\Models\Corrida;
 use App\Models\CorridaDestino;
 use App\Models\CorridaFinanceiro;
 use App\Models\Motorista;
+use App\Models\MotoristaVeiculo;
 use App\Models\Passageiro;
 use App\Models\StatusBusca;
 use App\Models\Tarifa;
 use App\Models\User;
+use App\Models\Veiculo;
 use App\Services\DespachoCorridaService;
 use App\Services\EstimarChegadaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -33,8 +35,6 @@ function criarUsuarioDespacho(string $prefixo): User
         'cpf' => substr(preg_replace('/\D/', '', $sufixo).'00000000000', 0, 11),
         'data_nascimento' => '1990-01-01',
         'email' => "$prefixo-$sufixo@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);
@@ -51,14 +51,30 @@ function criarMotoristaDespacho(
     $usuario = criarUsuarioDespacho('motorista');
     $motorista = Motorista::create([
         'user_id' => $usuario->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'numero_registro' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
         'ear' => null,
     ]);
+    // ficar online e aceitar exigem veículo vinculado e liberado
+    $veiculo = Veiculo::create([
+        'marca' => 'Chevrolet',
+        'modelo' => 'Onix',
+        'ano_fabricacao' => 2023,
+        'ano_modelo' => 2023,
+        'cor' => 'Prata',
+        'placa' => 'DSP'.random_int(1000, 9999),
+        'renavam' => (string) random_int(10000000000, 99999999999),
+        'cpf_cnpj_proprietario' => '12345678909',
+        'categoria' => 'carro',
+        'status' => 'aprovado',
+        'uf' => 'RO',
+    ]);
+    MotoristaVeiculo::create(['motorista_id' => $motorista->id, 'veiculo_id' => $veiculo->id]);
     $status = StatusBusca::create([
         'motorista_id' => $motorista->id,
+        'veiculo_id' => $veiculo->id,
         'disponivel' => $disponivel,
         'latitude' => $latitude,
         'longitude' => $longitude,
@@ -178,6 +194,19 @@ it('filtra casos invalidos e ordena as ofertas pela distancia ao embarque', func
     expect($ofertas->pluck('corrida_id')->all())
         ->toBe([$perto->id, $media->id])
         ->and($ofertas->pluck('corrida_id')->contains($longe->id))->toBeFalse();
+});
+
+it('manda o trajeto da corrida em ordem para o mapa da chamada', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $corrida = criarCorridaDespacho(criarPassageiroDespacho(), -8.763160);
+
+    $oferta = app(DespachoCorridaService::class)->ofertasPara($motorista)
+        ->firstWhere('corrida_id', $corrida->id);
+
+    expect($oferta['trajeto'])->toBe([
+        ['tipo' => 'origem', 'latitude' => -8.76316, 'longitude' => -63.90043],
+        ['tipo' => 'destino', 'latitude' => -8.701, 'longitude' => -63.91],
+    ]);
 });
 
 it('respeita o raio configurado na tarifa', function () {
@@ -311,16 +340,31 @@ it('agrega reputacao e mantem consultas constantes com muitas ofertas', function
         criarCorridaDespacho($passageiro, -8.762000 - ($indice / 100000));
     }
 
-    DB::flushQueryLog();
-    DB::enableQueryLog();
-    $ofertas = app(DespachoCorridaService::class)->ofertasPara($motorista);
-    $consultas = count(DB::getQueryLog());
-    DB::disableQueryLog();
+    $contar = function () use ($motorista): array {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $ofertas = app(DespachoCorridaService::class)->ofertasPara($motorista);
+        $consultas = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        return [$ofertas, $consultas];
+    };
+
+    [$ofertas, $consultas] = $contar();
+
+    foreach (range(41, 60) as $indice) {
+        criarCorridaDespacho($passageiro, -8.762000 - ($indice / 100000));
+    }
+    [$maisOfertas, $maisConsultas] = $contar();
 
     expect($ofertas)->toHaveCount(40)
+        ->and($maisOfertas)->toHaveCount(60)
         ->and($ofertas->first()['passageiro_nota'])->toBe(5.0)
         ->and($ofertas->first()['passageiro_corridas'])->toBe(1)
-        ->and($consultas)->toBeLessThanOrEqual(8);
+        // fixas, não crescem com as ofertas: inclui o veículo do motorista e
+        // as categorias aceitas em cada pedido
+        ->and($maisConsultas)->toBe($consultas)
+        ->and($consultas)->toBeLessThanOrEqual(12);
 });
 
 it('impede aceite direto por motorista offline', function () {
@@ -620,7 +664,8 @@ it('entrega ao motorista os dados do passageiro correto e os pontos da rota', fu
     [$motorista] = criarMotoristaDespacho(true);
     $motorista->user->update(['name' => 'João dos Santos']);
     $passageiro = criarPassageiroDespacho();
-    $passageiro->user->update(['name' => 'Maria da Silva', 'foto' => 'https://example.test/maria.jpg']);
+    $passageiro->user->update(['name' => 'Maria da Silva']);
+    $passageiro->update(['foto' => 'https://example.test/maria.jpg']);
     $corrida = criarCorridaDespacho($passageiro);
     app(DespachoCorridaService::class)->aceitar($motorista, $corrida->id);
     $this->mock(EstimarChegadaService::class)
@@ -742,6 +787,21 @@ it('protege os dados pessoais no detalhe da corrida e mostra somente o primeiro 
         ->assertJsonMissingPath('motorista.user.data_nascimento');
 });
 
+it('manda os horarios da corrida com fuso, para o app nao ler UTC como hora local', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $passageiro = criarPassageiroDespacho();
+    $corrida = criarCorridaDespacho($passageiro);
+    $corrida->update(['tempo_solicitacao' => '2026-10-09 12:34:45']);
+    app(DespachoCorridaService::class)->aceitar($motorista, $corrida->id);
+
+    $resposta = $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/corridas/'.$corrida->id)
+        ->assertOk();
+
+    expect($resposta->json('tempo_solicitacao'))->toBe('2026-10-09T12:34:45.000000Z')
+        ->and($resposta->json('tempo_aceite'))->toEndWith('Z');
+});
+
 it('fecha o fluxo completo e permite uma avaliacao para cada lado', function () {
     Event::fake([CorridaAtualizada::class, CorridasDisponiveisAlteradas::class]);
     [$motorista] = criarMotoristaDespacho(true);
@@ -816,6 +876,25 @@ it('mostra a avaliacao uma vez e preserva nota maxima quando o passageiro dispen
 
     expect(AvaliacoesCorrida::where('corrida_id', $corrida->id)
         ->where('usuario_id', $passageiro->user_id)->count())->toBe(1);
+});
+
+it('o motorista avalia pelo primeiro nome do convidado, sem o telefone dele', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $passageiro = criarPassageiroDespacho();
+    $servico = app(DespachoCorridaService::class);
+    $corrida = criarCorridaDespacho($passageiro);
+    $corrida->update(['convidado_nome' => 'Maria Aparecida', 'convidado_telefone' => '69999990000']);
+    $servico->aceitar($motorista, $corrida->id);
+    $servico->transicionar($motorista, $corrida->id, 'cheguei');
+    $servico->transicionar($motorista, $corrida->id, 'iniciar');
+    $servico->transicionar($motorista, $corrida->id, 'finalizar');
+
+    $this->actingAs($motorista->user, 'jwt')
+        ->getJson('/api/corrida-para-avaliar')
+        ->assertOk()
+        ->assertJsonPath('avaliando_como', 'motorista')
+        ->assertJsonPath('corrida.convidado_nome', 'Maria')
+        ->assertJsonMissingPath('corrida.convidado_telefone');
 });
 
 it('aceita registrar_padrao=true na query, como o axios do app envia', function () {

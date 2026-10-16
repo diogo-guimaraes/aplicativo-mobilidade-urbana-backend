@@ -10,8 +10,10 @@ use App\Models\Corrida;
 use App\Models\CotacaoCorrida;
 use App\Models\Motorista;
 use App\Models\Passageiro;
+use App\Models\User;
 use App\Services\AjustarPontoEmbarqueService;
 use App\Services\AlterarCorridaService;
+use App\Services\AumentarOfertaNegociaService;
 use App\Services\CalcularPrecoCorridaService;
 use App\Services\ContabilizarEsperaCorridaService;
 use App\Services\DespachoCorridaService;
@@ -25,6 +27,7 @@ use App\Services\SolicitarCorridaService;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -138,10 +141,10 @@ class CorridaController extends Controller
         $pagina = $this->doUsuario($request)
             ->with([
                 'produto:id,nome',
-                'motorista:id,user_id',
-                'motorista.user:id,name,foto',
-                'passageiro:id,user_id',
-                'passageiro.user:id,name,foto',
+                'motorista:id,user_id,foto',
+                'motorista.user:id,name',
+                'passageiro:id,user_id,foto',
+                'passageiro.user:id,name',
                 'veiculo:id,modelo,cor,placa',
                 'corrida_destinos:id,corrida_id,tipo,ordem,endereco',
                 'corrida_financeiro:id,corrida_id,valor_pago_passageiro,tarifa_base,taxa_cancelamento,taxa_plataforma_valor,taxa_plataforma_percentual,valor_motorista,valor_liquido_motorista,metodo_pagamento',
@@ -214,10 +217,12 @@ class CorridaController extends Controller
             'endereco' => 'required|string|max:255',
             'latitude' => 'required|numeric|between:-90,90|not_in:0',
             'longitude' => 'required|numeric|between:-180,180|not_in:0',
-            'itinerario' => 'sometimes|array|min:2|max:6',
+            'itinerario' => 'sometimes|array|min:2|max:'.(Corrida::MAX_PARADAS + 2),
             'itinerario.*.endereco' => 'required_with:itinerario|string|max:255',
             'itinerario.*.latitude' => 'required_with:itinerario|numeric|between:-90,90|not_in:0',
             'itinerario.*.longitude' => 'required_with:itinerario|numeric|between:-180,180|not_in:0',
+        ], [
+            'itinerario.max' => 'A corrida pode ter no máximo '.Corrida::MAX_PARADAS.' paradas.',
         ]);
 
         return $this->alterarComoPassageiro($request, $corrida, $alterarCorrida,
@@ -277,18 +282,24 @@ class CorridaController extends Controller
         $corrida = $this->doUsuario($request, $dados['perfil'] ?? null)
             ->whereIn('status_corrida', self::STATUS_ATIVOS)
             ->with([
-                'motorista.user:id,name,foto,telefone',
-                'passageiro.user:id,name,foto',
+                'motorista:id,user_id,foto',
+                'motorista.user:id,name,telefone',
+                'passageiro:id,user_id,foto',
+                'passageiro.user:id,name',
                 'veiculo',
                 'corrida_destinos',
                 'corrida_financeiro',
-                'produto:id,nome',
+                'produto:id,nome,grupo,tipo_veiculo',
+                'opcoes.produto:id,nome,codigo,grupo,tipo_veiculo',
             ])
             ->orderByDesc('id')
             ->first();
 
         if ($corrida === null) {
-            return response()->json(['corrida' => null]);
+            return response()->json([
+                'corrida' => null,
+                'encerrada' => $this->resumoDaCanceladaRecente($request, $dados['perfil'] ?? null),
+            ]);
         }
 
         $this->reduzirNomes($corrida);
@@ -297,7 +308,7 @@ class CorridaController extends Controller
             && $corrida->motorista_id === (int) $motoristaId
             && ! in_array($corrida->status_corrida, ['motorista_chegou', 'em_andamento'], true);
         if ($ocultarFotoPassageiro) {
-            $corrida->passageiro?->user?->setAttribute('foto', null);
+            $corrida->passageiro?->setAttribute('foto', null);
         }
 
         if ($corrida->status_corrida === 'aceita' && $corrida->tempo_aceite !== null) {
@@ -305,6 +316,24 @@ class CorridaController extends Controller
                 'cancelamento_gratis_ate',
                 Carbon::parse($corrida->tempo_aceite)
                     ->addSeconds(max(0, (int) config('precificacao.cancelamento_passageiro_carencia_segundos', 180)))
+                    ->toIso8601String()
+            );
+        }
+
+        // Negocia: até quanto o passageiro pode aumentar a oferta
+        if ($corrida->status_negociacao === 'em_negociacao' && $corrida->corrida_financeiro !== null) {
+            $corrida->setAttribute('oferta_maxima', AumentarOfertaNegociaService::ofertaMaxima($corrida->corrida_financeiro));
+        }
+
+        // Negocia no Pix/cartão: o motorista escolhido espera o pagamento até
+        // este horário (depois a corrida é cancelada e ele fica livre)
+        if ($corrida->status_corrida === 'aguardando_pagamento'
+            && $corrida->motorista_id !== null
+            && $corrida->tempo_aceite !== null) {
+            $corrida->setAttribute(
+                'pagamento_expira_em',
+                Carbon::parse($corrida->tempo_aceite)
+                    ->addSeconds((int) config('precificacao.negocia_pagamento_limite_segundos', 300))
                     ->toIso8601String()
             );
         }
@@ -328,6 +357,37 @@ class CorridaController extends Controller
                 ? $this->contabilizarEsperaCorridaService->resumo($corrida)
                 : null,
         ]);
+    }
+
+    /**
+     * O motorista que estava numa corrida recém-cancelada fica sabendo quem
+     * cancelou (e a taxa que recebeu), em vez da corrida só sumir da tela.
+     *
+     * @return array{id: int, cancelado_por: string|null, taxa_cancelamento: float}|null
+     */
+    private function resumoDaCanceladaRecente(Request $request, ?string $perfil): ?array
+    {
+        if ($perfil !== 'motorista') {
+            return null;
+        }
+
+        $cancelada = $this->doUsuario($request, $perfil)
+            ->where('status_corrida', 'cancelada')
+            ->whereNotNull('motorista_id')
+            ->where('updated_at', '>=', now()->subMinutes(3))
+            ->with('corrida_financeiro:id,corrida_id,taxa_cancelamento')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($cancelada === null) {
+            return null;
+        }
+
+        return [
+            'id' => $cancelada->id,
+            'cancelado_por' => $cancelada->cancelado_por,
+            'taxa_cancelamento' => (float) ($cancelada->corrida_financeiro->taxa_cancelamento ?? 0),
+        ];
     }
 
     /**
@@ -363,7 +423,7 @@ class CorridaController extends Controller
 
         return [
             'nome' => $this->primeiroNome((string) $usuario->name),
-            'foto' => $usuario->foto,
+            'foto' => $motorista->foto,
             'telefone' => is_string($telefone) ? $telefone : null,
             'nota' => $nota === null ? null : round((float) $nota, 2),
             'corridas' => (clone $corridasDoMotorista)
@@ -406,7 +466,7 @@ class CorridaController extends Controller
         return [
             'nome' => $this->primeiroNome((string) ($convidado ? $corrida->convidado_nome : $usuario->name)),
             'solicitante' => $convidado ? $this->primeiroNome((string) $usuario->name) : null,
-            'foto' => $fotoLiberada ? $usuario->foto : null,
+            'foto' => $fotoLiberada ? $passageiro->foto : null,
             'foto_oculta' => ! $fotoLiberada,
             'telefone' => $convidado
                 ? $corrida->convidado_telefone
@@ -469,7 +529,14 @@ class CorridaController extends Controller
 
         $dados = $request->validate([
             'cotacao_id' => 'required|uuid',
-            'produto_codigo' => 'required|string|max:60',
+            'produto_codigo' => 'required_without:produtos_codigos|string|max:60',
+            // várias categorias de uma vez (ex.: Normal de carro e de moto): vai quem atender primeiro
+            'produtos_codigos' => 'sometimes|array|min:1|max:8',
+            'produtos_codigos.*' => 'string|max:60|distinct',
+            // Negocia: quanto o passageiro oferece
+            'valor_oferecido' => 'nullable|numeric|min:1|max:5000',
+            // Negocia: escolhe sozinho o primeiro motorista que aceitar a oferta
+            'aceite_automatico' => 'nullable|boolean',
             'metodo_pagamento' => 'nullable|in:dinheiro,cartao,pix',
             'convidado' => 'nullable|array',
             'convidado.nome' => 'required_with:convidado|string|min:2|max:60',
@@ -490,13 +557,18 @@ class CorridaController extends Controller
             return response()->json(['message' => 'Cotação expirada. Refaça a consulta de preços.'], 410);
         }
 
+        $usuario = $request->user();
+        abort_unless($usuario instanceof User, 401, 'Não autenticado.');
+
         try {
             $corrida = $this->solicitarCorridaService->executar(
-                usuario: $request->user(),
+                usuario: $usuario,
                 cotacao: $cotacao,
-                produtoCodigo: (string) $dados['produto_codigo'],
+                produtosCodigos: array_values(array_map('strval', $dados['produtos_codigos'] ?? [$dados['produto_codigo']])),
                 metodoPagamento: $dados['metodo_pagamento'] ?? null,
-                convidado: $dados['convidado'] ?? null
+                convidado: $dados['convidado'] ?? null,
+                valorOferecido: isset($dados['valor_oferecido']) ? (float) $dados['valor_oferecido'] : null,
+                aceiteAutomatico: $request->boolean('aceite_automatico')
             );
         } catch (RuntimeException $excecao) {
             $status = $excecao->getCode() === 409 ? 409 : 422;
@@ -515,10 +587,10 @@ class CorridaController extends Controller
         $encontrada = $this->doUsuario($request)
             ->whereKey($corrida)
             ->with([
-                'motorista:id,user_id',
-                'motorista.user:id,name,foto',
-                'passageiro:id,user_id',
-                'passageiro.user:id,name,foto',
+                'motorista:id,user_id,foto',
+                'motorista.user:id,name',
+                'passageiro:id,user_id,foto',
+                'passageiro.user:id,name',
                 'veiculo',
                 'corrida_destinos',
                 'corrida_financeiro',
@@ -563,11 +635,15 @@ class CorridaController extends Controller
 
         $chaveCache = 'busca-endereco:'.md5(mb_strtolower(trim($endereco)));
 
-        $resultados = Cache::remember(
-            $chaveCache,
-            now()->addHours(6),
-            fn () => $this->consultarPlaces($endereco)
-        );
+        /** @var list<array{name: string, formattedAddress: string, latitude: float|null, longitude: float|null}>|null $resultados */
+        $resultados = Cache::get($chaveCache);
+
+        if ($resultados === null) {
+            $resultados = $this->consultarEnderecos($endereco);
+            // vazio guarda pouco: uma falha passageira do Google não pode
+            // esconder a rua por horas
+            Cache::put($chaveCache, $resultados, $resultados === [] ? now()->addMinutes(10) : now()->addHours(6));
+        }
 
         if (empty($resultados)) {
             return response()->json([]);
@@ -637,6 +713,91 @@ class CorridaController extends Controller
         $faixa = (float) config('services.google_maps.faixa_proximidade_km');
 
         return (int) log(1 + $quilometros / max($faixa, 0.1), 2);
+    }
+
+    /**
+     * Lugares (Places) e, para nome de rua, endereços (Geocoding): a busca de
+     * lugares do Google não acha muitas ruas ("Rua Jobu Miró", "Rua X, 123"),
+     * que o geocoding de endereço acha.
+     *
+     * @return list<array{name: string, formattedAddress: string, latitude: float|null, longitude: float|null}>
+     */
+    private function consultarEnderecos(string $endereco): array
+    {
+        $lugares = $this->consultarPlaces($endereco);
+        $enderecos = $lugares === [] || $this->pareceEndereco($endereco)
+            ? $this->consultarGeocoding($endereco)
+            : [];
+
+        $vistos = [];
+        $unicos = [];
+
+        foreach ([...$enderecos, ...$lugares] as $resultado) {
+            $chave = mb_strtolower($resultado['name'].'|'.$resultado['formattedAddress']);
+
+            if (! isset($vistos[$chave])) {
+                $vistos[$chave] = true;
+                $unicos[] = $resultado;
+            }
+        }
+
+        return $unicos;
+    }
+
+    private function pareceEndereco(string $endereco): bool
+    {
+        return preg_match('/^\s*(r\.?|rua|av\.?|avenida|tv\.?|travessa|al\.?|alameda|estrada|rodovia|pç\.?|praça)\s/iu', $endereco) === 1
+            || preg_match('/\d/', $endereco) === 1;
+    }
+
+    /**
+     * @return list<array{name: string, formattedAddress: string, latitude: float|null, longitude: float|null}>
+     */
+    private function consultarGeocoding(string $endereco): array
+    {
+        $regiao = $this->caixaDaRegiaoAtendida();
+
+        try {
+            $response = Http::timeout(8)->get('https://maps.googleapis.com/maps/api/geocode/json', [
+                'address' => $endereco,
+                'key' => config('services.google_maps.key'),
+                'language' => 'pt-BR',
+                'region' => 'br',
+                'components' => 'country:BR',
+                'bounds' => $regiao['low']['latitude'].','.$regiao['low']['longitude'].'|'
+                    .$regiao['high']['latitude'].','.$regiao['high']['longitude'],
+            ]);
+        } catch (ConnectionException) {
+            return [];
+        }
+
+        $resultados = [];
+
+        foreach ($response->json('results') ?? [] as $resultado) {
+            $latitude = $resultado['geometry']['location']['lat'] ?? null;
+            $longitude = $resultado['geometry']['location']['lng'] ?? null;
+            $endereco = (string) ($resultado['formatted_address'] ?? '');
+
+            // fora da região atendida não serve (o bounds só dá preferência)
+            if (! is_numeric($latitude) || ! is_numeric($longitude) || $endereco === ''
+                || $latitude < $regiao['low']['latitude'] || $latitude > $regiao['high']['latitude']
+                || $longitude < $regiao['low']['longitude'] || $longitude > $regiao['high']['longitude']) {
+                continue;
+            }
+
+            // "R. Jobu Miró, 123 - Bairro, Cidade - RO, CEP, Brasil": o nome é a
+            // rua (com número), o resto vira a linha de baixo
+            [$nome, $restante] = array_pad(explode(' - ', $endereco, 2), 2, '');
+
+            $resultados[] = [
+                'name' => $nome,
+                'formattedAddress' => $restante !== '' ? $restante : $endereco,
+                'latitude' => (float) $latitude,
+                'longitude' => (float) $longitude,
+            ];
+        }
+
+        return array_slice($resultados, 0, 3);
     }
 
     /**
@@ -728,13 +889,15 @@ class CorridaController extends Controller
     public function precosCorrida(Request $request): JsonResponse
     {
         $dados = $request->validate([
-            'enderecos' => 'required|array|min:2|max:6',
+            'enderecos' => 'required|array|min:2|max:'.(Corrida::MAX_PARADAS + 2),
             'enderecos.*.order' => 'required|integer|min:0',
             'enderecos.*.latitude' => 'required|numeric|between:-90,90',
             'enderecos.*.longitude' => 'required|numeric|between:-180,180',
             'enderecos.*.formattedAddress' => 'nullable|string|max:500',
             'cidade_id' => 'nullable|integer',
             'tempo_espera_min' => 'nullable|numeric|min:0|max:600',
+        ], [
+            'enderecos.max' => 'A corrida pode ter no máximo '.Corrida::MAX_PARADAS.' paradas.',
         ]);
 
         $rota = $this->estimarRotaService->executar(enderecos: $dados['enderecos']);

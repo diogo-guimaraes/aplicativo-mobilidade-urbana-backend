@@ -30,6 +30,13 @@ return [
 
     'disks' => [
 
+        'ticket_anexos' => [
+            'driver' => 'local',
+            'root' => env('TICKET_ANEXOS_ROOT', storage_path('app/private/ticket_anexos')),
+            'visibility' => 'private',
+            'throw' => true,
+        ],
+
         'local' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),
@@ -47,6 +54,19 @@ return [
             'report' => false,
         ],
 
+        'perfis_fotos' => [
+            'driver' => 'local',
+            'root' => public_path('images/perfis'),
+            'visibility' => 'public',
+            'throw' => true,
+        ],
+
+        'gestores_fotos' => [
+            'driver' => 'local',
+            'root' => public_path('images/gestores'),
+            'visibility' => 'public',
+            'throw' => true,
+        ],
         'motorista_documentos_anexos' => [
             'driver' => 'local',
             'root' => public_path('motorista_documentos_anexos'),

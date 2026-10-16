@@ -16,6 +16,8 @@ class Passageiro extends Model
     protected $fillable = [
         'user_id',
         'media_avaliacao',
+        'foto',
+        'status',
     ];
 
     /**

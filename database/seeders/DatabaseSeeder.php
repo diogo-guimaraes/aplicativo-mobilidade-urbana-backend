@@ -13,7 +13,6 @@ use App\Models\Passageiro;
 use App\Models\ProdutoCategoria;
 use App\Models\ProdutosCorrida;
 use App\Models\Tarifa;
-use App\Models\User;
 use App\Models\Veiculo;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
@@ -47,7 +46,6 @@ class DatabaseSeeder extends Seeder
         //     'email' => 'passageiro@example.com',
         //     'cpf' => "01149897296",
         //     'foto' => "",
-        //     'foto_thumbnail' => "",
         //     'status' => "ativo",
         // ]);
 
@@ -57,30 +55,23 @@ class DatabaseSeeder extends Seeder
         // ]);
         ProdutosCorrida::factory()->count(9)->create();
 
-        $this->call(PrecificacaoSeeder::class);
-        $userMotorista = User::factory()->create([
-            'name' => 'Diogo Guimarães',
-            'data_nascimento' => '2022-04-11',
-            'telefone' => '69981400661',
-            'email' => 'test@example.com',
-            'cpf' => '01149897295',
-            'foto' => '',
-            'foto_thumbnail' => '',
-            'status' => 'ativo',
+        $this->call([
+            PrecificacaoSeeder::class,
+            GestoresSeeder::class,
+            CadastroDesenvolvimentoSeeder::class,
         ]);
-
         Cidade::factory()->create([
             'id' => 4382,
             'nome' => 'Porto Velho',
-            'uf' => 21,
+            'uf' => 'RO',
             'ibge' => 1100205,
         ]);
 
         Cidade::factory()->create([
             'id' => 4350,
             'nome' => 'Ariquemes',
-            'uf' => 21,
-            'ibge' => 1100205,
+            'uf' => 'RO',
+            'ibge' => 1100023,
         ]);
 
         // BannerPublicidade::factory()->create([

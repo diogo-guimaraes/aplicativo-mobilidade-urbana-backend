@@ -20,8 +20,6 @@ function usuarioConvite(string $nome): User
         'cpf' => substr(preg_replace('/\D/', '', $id).'00000000000', 0, 11),
         'data_nascimento' => '1990-01-01',
         'email' => "convite-$id@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);
@@ -76,7 +74,7 @@ function motoristaDaCorridaConvite(Corrida $corrida): Motorista
 {
     $motorista = Motorista::create([
         'user_id' => usuarioConvite('Motorista Teste')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,

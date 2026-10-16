@@ -21,8 +21,6 @@ function criarUsuarioHistorico(string $papel): User
         'cpf' => substr(preg_replace('/\D/', '', $identificador).'00000000000', 0, 11),
         'data_nascimento' => '1990-01-01',
         'email' => "$papel-$identificador@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);
@@ -40,7 +38,7 @@ function criarMotoristaHistorico(): Motorista
 {
     return Motorista::create([
         'user_id' => criarUsuarioHistorico('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'numero_registro' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,

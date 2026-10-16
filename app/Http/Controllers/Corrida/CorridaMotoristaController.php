@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Corrida;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Motorista\MotoristaCadastroController;
 use App\Models\Motorista;
+use App\Models\MotoristaVeiculo;
 use App\Services\AlterarCorridaService;
 use App\Services\DespachoCorridaService;
 use Illuminate\Http\JsonResponse;
@@ -34,13 +35,34 @@ class CorridaMotoristaController extends Controller
             return $this->negarPorCadastro();
         }
 
-        $status = $this->despachoCorridaService->atualizarDisponibilidade(
-            motorista: $motorista,
-            disponivel: (bool) $dados['disponivel'],
-            latitude: isset($dados['latitude']) ? (float) $dados['latitude'] : null,
-            longitude: isset($dados['longitude']) ? (float) $dados['longitude'] : null,
-            veiculoId: isset($dados['veiculo_id']) ? (int) $dados['veiculo_id'] : null
-        );
+        // só vale veículo do próprio cadastro: com o de outro motorista daria
+        // para receber Elétrico ou Táxi sem ter sido aprovado
+        if (isset($dados['veiculo_id']) && ! MotoristaVeiculo::where('motorista_id', $motorista->id)
+            ->where('veiculo_id', (int) $dados['veiculo_id'])
+            ->exists()) {
+            return response()->json(['message' => 'Este veículo não está no seu cadastro.'], 422);
+        }
+
+        // sem veículo o motorista ficava "Buscando" sem nunca receber corrida
+        // (toda corrida pede uma categoria de veículo)
+        if ($dados['disponivel'] && ! MotoristaVeiculo::where('motorista_id', $motorista->id)->exists()) {
+            return response()->json([
+                'message' => 'Cadastre um veículo para ficar online.',
+                'motivo' => 'sem_veiculo',
+            ], 422);
+        }
+
+        try {
+            $status = $this->despachoCorridaService->atualizarDisponibilidade(
+                motorista: $motorista,
+                disponivel: (bool) $dados['disponivel'],
+                latitude: isset($dados['latitude']) ? (float) $dados['latitude'] : null,
+                longitude: isset($dados['longitude']) ? (float) $dados['longitude'] : null,
+                veiculoId: isset($dados['veiculo_id']) ? (int) $dados['veiculo_id'] : null
+            );
+        } catch (RuntimeException $excecao) {
+            return response()->json(['message' => $excecao->getMessage()], $this->status($excecao));
+        }
 
         return response()->json($status);
     }
@@ -220,7 +242,7 @@ class CorridaMotoristaController extends Controller
     {
         $motorista = Motorista::where('user_id', $request->user()->id)->first();
 
-        if ($motorista === null || $motorista->status !== MotoristaCadastroController::APROVADO) {
+        if ($motorista === null || $motorista->status !== MotoristaCadastroController::ATIVO) {
             $this->situacaoDoCadastro = $motorista->status
                 ?? MotoristaCadastroController::SEM_CADASTRO;
 

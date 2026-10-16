@@ -23,8 +23,6 @@ function criarUsuarioParada(string $papel): User
         'cpf' => substr(preg_replace('/\D/', '', $id).'00000000000', 0, 11),
         'data_nascimento' => '1990-01-01',
         'email' => "$papel-$id@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);
@@ -34,7 +32,7 @@ function criarMotoristaParada(): Motorista
 {
     return Motorista::create([
         'user_id' => criarUsuarioParada('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,

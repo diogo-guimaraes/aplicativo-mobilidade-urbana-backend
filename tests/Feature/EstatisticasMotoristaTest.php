@@ -20,8 +20,6 @@ function usuarioEstatistica(string $papel): User
         'cpf' => substr(preg_replace('/\D/', '', $id).'00000000000', 0, 11),
         'data_nascimento' => '1990-01-01',
         'email' => "$papel-$id@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);
@@ -31,7 +29,7 @@ function motoristaEstatistica(): Motorista
 {
     return Motorista::create([
         'user_id' => usuarioEstatistica('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
@@ -97,7 +95,7 @@ it('calcula a finalização só com os cancelamentos do próprio motorista e nã
 it('responde sem corridas com finalização nula', function () {
     $motorista = Motorista::create([
         'user_id' => usuarioEstatistica('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
@@ -190,7 +188,7 @@ it('registra a recusa só enquanto a chamada ainda está disponível', function 
 it('soma os ganhos do dia e o saldo só com corridas finalizadas', function () {
     $motorista = Motorista::create([
         'user_id' => usuarioEstatistica('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
@@ -210,7 +208,7 @@ it('soma os ganhos do dia e o saldo só com corridas finalizadas', function () {
             'tempo_solicitacao' => now()->subDay(),
             'tempo_final' => $quando,
             'metodo_pagamento' => 'pix',
-            'status_pagamento' => 'pendente',
+            'status_pagamento' => 'pago',
         ]);
         DB::table('corrida_financeiros')->insert([
             'corrida_id' => $corrida->id,
