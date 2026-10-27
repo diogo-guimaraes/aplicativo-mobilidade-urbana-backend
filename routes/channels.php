@@ -5,6 +5,8 @@ use App\Models\Corrida;
 use App\Models\Gestor;
 use App\Models\Motorista;
 use App\Models\Passageiro;
+use App\Models\SalaParticipante;
+use App\Models\SaldoMotorista;
 use App\Models\User;
 use App\Services\ChatCorridaService;
 use Illuminate\Support\Facades\Broadcast;
@@ -56,3 +58,16 @@ Broadcast::channel('corrida.{corridaId}.chat', function (User $usuario, int $cor
 Broadcast::channel('corrida.{corridaId}.chat.suporte', function (Gestor $gestor, int $corridaId) {
     return app(ChatCorridaService::class)->gestorPodeConsultar($gestor, $corridaId);
 }, ['guards' => ['gestores']]);
+
+Broadcast::channel('corrida.{corridaId}.chat.financeiro', function (Gestor $gestor, int $corridaId) {
+    return $gestor->pode('financeiro.consultar') && SaldoMotorista::where('corrida_id', $corridaId)->exists();
+}, ['guards' => ['gestores']]);
+
+Broadcast::channel('sala-compartilhada.{salaId}', function (User $user, int $salaId) {
+    $passageiroId = Passageiro::where('user_id', $user->id)->value('id');
+
+    return $passageiroId !== null && SalaParticipante::where('sala_id', $salaId)
+        ->where('passageiro_id', $passageiroId)
+        ->where('status', '!=', SalaParticipante::SAIU)
+        ->exists();
+}, ['guards' => ['jwt']]);

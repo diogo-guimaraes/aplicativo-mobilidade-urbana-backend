@@ -26,6 +26,7 @@ class Corrida extends Model
         'convidado_nome',
         'convidado_telefone',
         'cidade_id',
+        'sala_compartilhada_id',
         'veiculo_id',
         'tarifa_id',
         'multiplicador_dinamico',
@@ -40,6 +41,7 @@ class Corrida extends Model
         'tempo_embarque',
         'tempo_inicio',
         'tempo_final',
+        'cancelada_em',
         'distancia_total',
         'valor_estimado_inicial',
         'valor_negociado_final',
@@ -68,6 +70,7 @@ class Corrida extends Model
             'tempo_embarque' => 'datetime',
             'tempo_inicio' => 'datetime',
             'tempo_final' => 'datetime',
+            'cancelada_em' => 'datetime',
         ];
     }
 
@@ -141,6 +144,14 @@ class Corrida extends Model
     public function produto(): BelongsTo
     {
         return $this->belongsTo(ProdutosCorrida::class, 'produto_id');
+    }
+
+    /**
+     * @return BelongsTo<SalaCompartilhada, $this>
+     */
+    public function salaCompartilhada(): BelongsTo
+    {
+        return $this->belongsTo(SalaCompartilhada::class);
     }
 
     /**
