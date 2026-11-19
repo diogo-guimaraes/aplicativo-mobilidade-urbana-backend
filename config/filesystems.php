@@ -69,6 +69,14 @@ return [
             'throw' => true,
         ],
 
+        // ícones dos produtos de corrida (enviados na gestão)
+        'produtos' => [
+            'driver' => 'local',
+            'root' => public_path('images/produtos'),
+            'visibility' => 'public',
+            'throw' => true,
+        ],
+
         // imagens dos avatares de perfil (enviadas na gestão)
         'avatares' => [
             'driver' => 'local',

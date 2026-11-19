@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\IconeDoProduto;
 use Database\Factories\ProdutosCorridaFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -32,6 +33,11 @@ class ProdutosCorrida extends Model
         'requisito_veiculo',
         'prioritario',
         'ordem',
+        'ativo',
+        'icone_tipo',
+        'icone_valor',
+        'icone_path',
+        'descricao',
     ];
 
     /**
@@ -39,7 +45,13 @@ class ProdutosCorrida extends Model
      */
     protected function casts(): array
     {
-        return ['prioritario' => 'boolean'];
+        return ['prioritario' => 'boolean', 'ativo' => 'boolean'];
+    }
+
+    /** @return array{tipo: string, valor: string}|null */
+    public function icone(): ?array
+    {
+        return IconeDoProduto::de($this->icone_tipo, $this->icone_valor, $this->icone_path);
     }
 
     public function atendidoPor(Veiculo $veiculo): bool

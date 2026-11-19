@@ -11,6 +11,7 @@ use App\Http\Controllers\Corrida\CobrancaPixController;
 use App\Http\Controllers\Corrida\CorridaController;
 use App\Http\Controllers\Corrida\CorridaMotoristaController;
 use App\Http\Controllers\Corrida\GorjetaController;
+use App\Http\Controllers\Corrida\MotoristasProximosController;
 use App\Http\Controllers\Corrida\NegociacaoCorridaController;
 use App\Http\Controllers\Passageiro\PerfilPassageiroController;
 use Illuminate\Support\Facades\Route;
@@ -86,3 +87,7 @@ Route::get('selos-avaliacao', [BloqueiosUsuariosController::class, 'selos']);
 Route::get('bloqueios-usuarios', [BloqueiosUsuariosController::class, 'index']);
 Route::post('bloqueios-usuarios', [BloqueiosUsuariosController::class, 'store'])->middleware('throttle:30,1');
 Route::delete('bloqueios-usuarios/{bloqueio}', [BloqueiosUsuariosController::class, 'destroy'])->whereNumber('bloqueio');
+
+// carrinhos do mapa do passageiro: motoristas livres por perto
+Route::get('motoristas-proximos', MotoristasProximosController::class)
+    ->middleware('throttle:30,1,motoristas-proximos');

@@ -12,9 +12,14 @@ class ResolverTarifaService
     /**
      * @return Collection<int, Tarifa>
      */
-    public function paraTodosOsProdutos(?int $cidadeId, CarbonInterface $momento): Collection
+    public function paraTodosOsProdutos(?int $cidadeId, CarbonInterface $momento, bool $apenasListados = true): Collection
     {
         $estadoId = $cidadeId === null ? null : Cidade::query()->whereKey($cidadeId)->value('uf_id');
+        // a lista de produtos da região (cidade > estado > geral) decide o que o
+        // passageiro vê; quem consulta uma corrida já feita não depende dela
+        $listados = $apenasListados
+            ? app(ProdutosDisponiveisService::class)->listaDaRegiao($cidadeId, $estadoId)['ids']
+            : null;
 
         return Tarifa::query()
             ->where('ativo', true)
@@ -26,6 +31,7 @@ class ResolverTarifaService
                 ->orWhere(fn ($q) => $q->whereNull('cidade_id')->whereNull('estado_id')))
             ->with('produto')
             ->get()
+            ->filter(fn (Tarifa $tarifa) => $listados === null || in_array($tarifa->produto_id, $listados, true))
             ->filter(fn (Tarifa $tarifa) => $this->valeAgora($tarifa, $momento))
             // a cidade tem prioridade absoluta sobre o estado, e o estado sobre o geral
             ->sortByDesc(fn (Tarifa $tarifa) => match (true) {
@@ -41,7 +47,7 @@ class ResolverTarifaService
 
     public function paraProduto(int $produtoId, ?int $cidadeId, CarbonInterface $momento): ?Tarifa
     {
-        return $this->paraTodosOsProdutos($cidadeId, $momento)
+        return $this->paraTodosOsProdutos($cidadeId, $momento, apenasListados: false)
             ->firstWhere('produto_id', $produtoId);
     }
 

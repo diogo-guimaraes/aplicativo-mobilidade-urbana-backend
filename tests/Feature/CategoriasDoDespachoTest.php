@@ -353,7 +353,7 @@ it('a chamada Expresso aparece antes das outras para o motorista', function () {
         ->and(catOfertadas(catMotorista('moto')))->toBe([]);
 });
 
-it('o seeder cria o Expresso logo depois do Normal, com raio de busca menor', function () {
+it('o seeder cria os dez produtos, com o Expresso prioritário e de raio de busca menor', function () {
     ProdutosCorrida::query()->delete();
     $this->seed(PrecificacaoSeeder::class);
 
@@ -362,7 +362,9 @@ it('o seeder cria o Expresso logo depois do Normal, com raio de busca menor', fu
     $raioExpresso = Tarifa::where('produto_id', $expresso->id)->value('raio_busca_motorista_km');
     $raioPop = Tarifa::where('produto_id', ProdutosCorrida::where('codigo', 'pop')->value('id'))->value('raio_busca_motorista_km');
 
-    expect(array_slice($ordem, 0, 3))->toBe(['negocia', 'pop', 'expresso'])
+    expect($ordem)->toBe(['pop', 'negocia', 'carona', 'compartilhada', 'moto', 'expresso', 'moto_negocia', 'taxi', 'envio_moto', 'envio_carro'])
+        // a Compartilhada usa a tarifa do Pop: não tem a sua
+        ->and(Tarifa::where('produto_id', ProdutosCorrida::where('codigo', 'compartilhada')->value('id'))->count())->toBe(0)
         ->and($expresso->prioritario)->toBeTrue()
         ->and((float) $raioExpresso)->toBeLessThan((float) $raioPop);
 });

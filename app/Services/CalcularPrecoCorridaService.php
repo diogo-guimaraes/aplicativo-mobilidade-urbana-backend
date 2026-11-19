@@ -77,6 +77,8 @@ class CalcularPrecoCorridaService
                 'grupo' => $tarifa->produto?->grupo,
                 'tipo_veiculo' => $tarifa->produto?->tipo_veiculo,
                 'ordem' => $tarifa->produto?->ordem,
+                'descricao' => $tarifa->produto?->descricao,
+                'icone' => $tarifa->produto?->icone(),
             ],
             'corrida' => [
                 'distancia_km' => round($distanciaKm, 2),

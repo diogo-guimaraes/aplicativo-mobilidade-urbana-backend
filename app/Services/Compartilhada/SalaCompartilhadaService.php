@@ -14,6 +14,7 @@ use App\Models\Tarifa;
 use App\Services\EnderecoPorCoordenadaService;
 use App\Services\NotificarUsuarioService;
 use App\Services\PagamentoCorridaService;
+use App\Services\ProdutosDisponiveisService;
 use App\Services\ReputacaoService;
 use App\Services\SolicitarCorridaService;
 use App\Support\Avisar;
@@ -68,6 +69,12 @@ class SalaCompartilhadaService
             // sem requisito cumprido, aparece com o motivo
             'exibir' => false,
         ];
+
+        // a gestão liga e desliga a Compartilhada por estado ou cidade, como os outros produtos
+        if (! app(ProdutosDisponiveisService::class)->disponivelNaCidade('compartilhada', $cotacao->cidade_id)) {
+            return $resposta;
+        }
+
         $categoria = $cotacao->categoria((string) config('compartilhada.produto'));
 
         if ($categoria === null) {

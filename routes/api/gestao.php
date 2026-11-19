@@ -12,6 +12,7 @@ use App\Http\Controllers\Gestao\DinamicaController;
 use App\Http\Controllers\Gestao\FotoPerfilController;
 use App\Http\Controllers\Gestao\GanhosMotoristasController;
 use App\Http\Controllers\Gestao\HistoricoCorridaSaldoController;
+use App\Http\Controllers\Gestao\MotoristasOnlineController;
 use App\Http\Controllers\Gestao\PlataformaLucrosController;
 use App\Http\Controllers\Gestao\RegrasAcessoController;
 use App\Http\Controllers\Gestao\RegrasDespachoController;
@@ -54,6 +55,7 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
             Route::get('motoristas-ganhos/resumo', [GanhosMotoristasController::class, 'resumo']);
             Route::get('motoristas-ganhos/detalhes', [GanhosMotoristasController::class, 'detalhes']);
             Route::get('motoristas-saldo/{movimentacao}/corrida/mensagens', HistoricoCorridaSaldoController::class)->whereNumber('movimentacao')->name('motoristas-saldo.corrida');
+            Route::get('motoristas-online', [MotoristasOnlineController::class, 'index'])->name('motoristas-online.index');
             Route::get('motoristas-saldo', [SaldoMotoristasController::class, 'index'])->name('motoristas-saldo.index');
             Route::get('motoristas-saldo/{movimentacao}', [SaldoMotoristasController::class, 'show'])->whereNumber('movimentacao')->name('motoristas-saldo.show');
             Route::get('ajuda/solicitantes', [TicketsController::class, 'solicitantes']);
