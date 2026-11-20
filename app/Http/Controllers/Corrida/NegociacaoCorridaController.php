@@ -51,6 +51,11 @@ class NegociacaoCorridaController extends Controller
             'valor_passageiro' => $proposta->valor_passageiro,
             'expira_em' => $proposta->expira_em?->toIso8601String(),
             'status' => $proposta->status,
+            // o mesmo prazo que o passageiro conta
+            'validade_segundos' => NegociacaoCorridaService::validadeDaPropostaSegundos(),
+            'restante_segundos' => $proposta->expira_em === null
+                ? null
+                : round(max(0, now()->diffInMilliseconds($proposta->expira_em, false)) / 1000, 1),
         ], 201);
     }
 

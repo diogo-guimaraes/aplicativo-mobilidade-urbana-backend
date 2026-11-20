@@ -1110,6 +1110,11 @@ class DespachoCorridaService
             'expira_em' => $proposta->expira_em?->toIso8601String(),
             // o app desenha a barra do tempo com o prazo inteiro, sem chutar
             'validade_segundos' => NegociacaoCorridaService::validadeDaPropostaSegundos(),
+            // quanto falta agora, pelo relógio do servidor: o motorista conta o mesmo
+            // prazo que o passageiro vê, sem depender do relógio do celular
+            'restante_segundos' => $proposta->expira_em === null
+                ? null
+                : round(max(0, now()->diffInMilliseconds($proposta->expira_em, false)) / 1000, 1),
         ];
     }
 
